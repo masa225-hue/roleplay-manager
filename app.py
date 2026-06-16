@@ -18,7 +18,9 @@ def get_analysis_prompt() -> str:
 
 
 def transcribe_and_analyze(audio_bytes: bytes) -> tuple[str, str]:
-    client = genai.Client(api_key=get_api_key())
+    api_key = get_api_key()
+    os.environ["GOOGLE_API_KEY"] = api_key
+    client = genai.Client(api_key=api_key)
 
     with st.spinner("文字起こし中…"):
         transcribe_resp = client.models.generate_content(
