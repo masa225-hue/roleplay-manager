@@ -99,16 +99,19 @@ if st.button("文字起こし・分析を実行", type="primary", disabled=audio
     elif not get_api_key():
         st.error("GOOGLE_API_KEY が設定されていません")
     else:
-        transcript, feedback = transcribe_and_analyze(audio.read())
-        sheets_saved = save_to_sheets(date, manager, participant, transcript, feedback)
+        try:
+            transcript, feedback = transcribe_and_analyze(audio.read())
+            sheets_saved = save_to_sheets(date, manager, participant, transcript, feedback)
 
-        st.subheader("文字起こし")
-        st.text_area("", value=transcript, height=200, label_visibility="collapsed")
+            st.subheader("文字起こし")
+            st.text_area("", value=transcript, height=200, label_visibility="collapsed")
 
-        st.subheader("フィードバック")
-        st.markdown(feedback)
+            st.subheader("フィードバック")
+            st.markdown(feedback)
 
-        if sheets_saved:
-            st.success("スプレッドシートに保存しました")
-        else:
-            st.info("スプレッドシートは未設定です（任意）")
+            if sheets_saved:
+                st.success("スプレッドシートに保存しました")
+            else:
+                st.info("スプレッドシートは未設定です（任意）")
+        except Exception as e:
+            st.error(f"エラーが発生しました:\n\n{type(e).__name__}: {e}")
