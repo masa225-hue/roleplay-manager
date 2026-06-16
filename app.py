@@ -3,7 +3,8 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 import streamlit as st
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "analysis.txt"
@@ -18,26 +19,30 @@ def get_analysis_prompt() -> str:
 
 
 def transcribe_and_analyze(audio_bytes: bytes) -> tuple[str, str]:
-    genai.configure(api_key=get_api_key())
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    client = genai.Client(api_key=get_api_key())
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         f.write(audio_bytes)
         tmp_path = f.name
 
     try:
-        audio_file = genai.upload_file(tmp_path, mime_type="audio/wav")
+        with open(tmp_path, "rb") as f:
+            audio_data = f.read()
 
         with st.spinner("文字起こし中…"):
-            transcribe_resp = model.generate_content([
-                audio_file,
-                "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
-            ])
+            transcribe_resp = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=[
+                    types.Part.from_bytes(data=audio_data, mime_type="audio/wav"),
+                    "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
+                ],
+            )
         transcript = transcribe_resp.text
 
         with st.spinner("分析・フィードバック生成中…"):
-            analyze_resp = model.generate_content(
-                f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}"
+            analyze_resp = client.models.generate_content(
+                model="gemini-1.5-flash",
+                contents=f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}",
             )
         feedback = analyze_resp.text
 
