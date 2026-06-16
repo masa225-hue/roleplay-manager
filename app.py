@@ -1,17 +1,16 @@
 import os
-import base64
+import tempfile
 from datetime import datetime
 from pathlib import Path
 
-import anthropic
+import google.generativeai as genai
 import streamlit as st
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "analysis.txt"
 
 
 def get_api_key() -> str:
-    # Streamlit Cloud の Secrets → ローカルの環境変数の順で取得
-    return st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY", ""))
+    return st.secrets.get("GOOGLE_API_KEY", os.getenv("GOOGLE_API_KEY", ""))
 
 
 def get_analysis_prompt() -> str:
@@ -19,41 +18,31 @@ def get_analysis_prompt() -> str:
 
 
 def transcribe_and_analyze(audio_bytes: bytes) -> tuple[str, str]:
-    client = anthropic.Anthropic(api_key=get_api_key())
-    audio_b64 = base64.standard_b64encode(audio_bytes).decode("utf-8")
+    genai.configure(api_key=get_api_key())
+    model = genai.GenerativeModel("gemini-1.5-flash")
 
-    with st.spinner("文字起こし中…"):
-        transcribe_resp = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            messages=[{
-                "role": "user",
-                "content": [
-                    {
-                        "type": "document",
-                        "source": {
-                            "type": "base64",
-                            "media_type": "audio/wav",
-                            "data": audio_b64,
-                        },
-                    },
-                    {
-                        "type": "text",
-                        "text": "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
-                    },
-                ],
-            }],
-        )
-    transcript = transcribe_resp.content[0].text
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        f.write(audio_bytes)
+        tmp_path = f.name
 
-    with st.spinner("分析・フィードバック生成中…"):
-        analyze_resp = client.messages.create(
-            model="claude-sonnet-4-6",
-            max_tokens=4096,
-            system=get_analysis_prompt(),
-            messages=[{"role": "user", "content": f"【会話記録】\n{transcript}"}],
-        )
-    feedback = analyze_resp.content[0].text
+    try:
+        audio_file = genai.upload_file(tmp_path, mime_type="audio/wav")
+
+        with st.spinner("文字起こし中…"):
+            transcribe_resp = model.generate_content([
+                audio_file,
+                "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
+            ])
+        transcript = transcribe_resp.text
+
+        with st.spinner("分析・フィードバック生成中…"):
+            analyze_resp = model.generate_content(
+                f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}"
+            )
+        feedback = analyze_resp.text
+
+    finally:
+        os.unlink(tmp_path)
 
     return transcript, feedback
 
@@ -95,7 +84,6 @@ def save_to_sheets(date: str, manager: str, participant: str, transcript: str, f
 st.set_page_config(page_title="ロールプレイ管理ツール", page_icon="🎙️", layout="centered")
 st.title("ロールプレイ管理ツール")
 
-# セッション情報
 st.subheader("セッション情報")
 col1, col2, col3 = st.columns(3)
 with col1:
@@ -107,21 +95,18 @@ with col3:
 
 st.divider()
 
-# 録音
 st.subheader("録音")
 audio = st.audio_input("マイクボタンを押して録音してください")
 
 st.divider()
 
-# 分析実行
 if st.button("文字起こし・分析を実行", type="primary", disabled=audio is None):
     if not manager or not participant:
         st.error("管理者名と実施者名を入力してください")
     elif not get_api_key():
-        st.error("ANTHROPIC_API_KEY が設定されていません")
+        st.error("GOOGLE_API_KEY が設定されていません")
     else:
         transcript, feedback = transcribe_and_analyze(audio.read())
-
         sheets_saved = save_to_sheets(date, manager, participant, transcript, feedback)
 
         st.subheader("文字起こし")
