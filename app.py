@@ -1,5 +1,4 @@
 import os
-import tempfile
 from datetime import datetime
 from pathlib import Path
 
@@ -21,34 +20,22 @@ def get_analysis_prompt() -> str:
 def transcribe_and_analyze(audio_bytes: bytes) -> tuple[str, str]:
     client = genai.Client(api_key=get_api_key())
 
-    with tempfile.NamedTemporaryFile(suffix=".webm", delete=False) as f:
-        f.write(audio_bytes)
-        tmp_path = f.name
+    with st.spinner("文字起こし中…"):
+        transcribe_resp = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=[
+                types.Part.from_bytes(data=audio_bytes, mime_type="audio/webm"),
+                "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
+            ],
+        )
+    transcript = transcribe_resp.text
 
-    try:
-        with st.spinner("文字起こし中…"):
-            uploaded = client.files.upload(
-                file=tmp_path,
-                config=types.UploadFileConfig(mime_type="audio/webm"),
-            )
-            transcribe_resp = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[
-                    uploaded,
-                    "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
-                ],
-            )
-        transcript = transcribe_resp.text
-
-        with st.spinner("分析・フィードバック生成中…"):
-            analyze_resp = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}",
-            )
-        feedback = analyze_resp.text
-
-    finally:
-        os.unlink(tmp_path)
+    with st.spinner("分析・フィードバック生成中…"):
+        analyze_resp = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}",
+        )
+    feedback = analyze_resp.text
 
     return transcript, feedback
 
