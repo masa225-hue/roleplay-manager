@@ -1,12 +1,13 @@
 import os
+import base64
 from datetime import datetime
 from pathlib import Path
 
-from google import genai
-from google.genai import types
+import requests
 import streamlit as st
 
 PROMPT_PATH = Path(__file__).parent / "prompts" / "analysis.txt"
+GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent"
 
 
 def get_api_key() -> str:
@@ -17,27 +18,31 @@ def get_analysis_prompt() -> str:
     return PROMPT_PATH.read_text(encoding="utf-8")
 
 
+def gemini(api_key: str, parts: list) -> str:
+    resp = requests.post(
+        GEMINI_URL,
+        params={"key": api_key},
+        json={"contents": [{"parts": parts}]},
+        timeout=120,
+    )
+    resp.raise_for_status()
+    return resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+
+
 def transcribe_and_analyze(audio_bytes: bytes) -> tuple[str, str]:
     api_key = get_api_key()
-    os.environ["GOOGLE_API_KEY"] = api_key
-    client = genai.Client(api_key=api_key)
+    audio_b64 = base64.b64encode(audio_bytes).decode()
 
     with st.spinner("文字起こし中…"):
-        transcribe_resp = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=[
-                types.Part.from_bytes(data=audio_bytes, mime_type="audio/webm"),
-                "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。",
-            ],
-        )
-    transcript = transcribe_resp.text
+        transcript = gemini(api_key, [
+            {"inline_data": {"mime_type": "audio/webm", "data": audio_b64}},
+            {"text": "この音声を日本語でそのまま文字起こしてください。話者が複数いる場合は「話者A:」「話者B:」のように区別してください。"},
+        ])
 
     with st.spinner("分析・フィードバック生成中…"):
-        analyze_resp = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}",
-        )
-    feedback = analyze_resp.text
+        feedback = gemini(api_key, [
+            {"text": f"{get_analysis_prompt()}\n\n【会話記録】\n{transcript}"},
+        ])
 
     return transcript, feedback
 
@@ -62,12 +67,9 @@ def save_to_sheets(date: str, manager: str, participant: str, transcript: str, f
         gc = gspread.authorize(creds)
         ws = gc.open_by_key(sheet_id).sheet1
         ws.append_row([
-            date,
-            manager,
-            participant,
+            date, manager, participant,
             datetime.now().strftime("%H:%M:%S"),
-            transcript,
-            feedback,
+            transcript, feedback,
         ])
         return True
     except Exception:
